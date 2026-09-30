@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import axios from 'axios'
-import { ArrowRight, Bell, Bookmark, CalendarDays, Check, ChevronDown, Clock3, Compass, Heart, LogIn, LogOut, MapPin, Menu, Plus, Search, Sparkles, Ticket, Users, X } from 'lucide-react'
+import { ArrowRight, Bell, Bookmark, CalendarDays, Check, ChevronDown, Clock3, Compass, Heart, ImagePlus, LogIn, LogOut, MapPin, Menu, Plus, Search, Sparkles, Ticket, Users, X } from 'lucide-react'
 import './eventhub.css'
 
 type GeoPoint = { type: 'Point'; coordinates: [number, number] }
@@ -147,6 +147,7 @@ function App() {
     const authoredEvent = { ...event, organizer: session?.name || 'Guest organizer' }
     try { const { data } = await axios.post<EventItem>('/api/events', { ...authoredEvent, _id: undefined }); setEvents((items) => [data, ...items]) } catch (error) {
       if (axios.isAxiosError(error) && error.response && error.response.status !== 503) { notify(error.response.data?.message || 'Could not publish this event.'); return }
+      if (!images.includes(authoredEvent.image)) { notify('Could not save this event and its image. Connect to MongoDB, then try again.'); return }
       setEvents((items) => [{ ...authoredEvent, _id: `local-${Date.now()}` }, ...items])
     }
     setCreateOpen(false); setView('Discover'); setCategory('Everything'); notify('Your event is live. Let’s get people together.')
@@ -192,19 +193,41 @@ function EventDialog({ event, registered, onClose, onRegister }: { event: EventI
   return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><button className="dialog-close" aria-label="Close" onClick={onClose}><X size={19} /></button><img className="dialog-image" src={event.image} alt="" /><div className="dialog-body"><span className="dialog-category">{event.category} <i /> {event.format}</span><h2 id="dialog-title">{event.title}</h2><div className="dialog-facts"><span><CalendarDays size={16} /> {shortDate(event.date)} · {event.time}</span><span><MapPin size={16} /> {event.venue}, {event.location}</span></div><p className="dialog-description">{event.description}</p><div className="dialog-host"><span className="host-avatar">{event.organizer.slice(0, 1)}</span><span>Hosted by <strong>{event.organizer}</strong></span><span className="dialog-price">{event.price ? `$${event.price}` : 'Free'}<small> / person</small></span></div>{registered ? <div className="registered-note"><Check size={17} /> You’re registered. See you there!</div> : <form className="register-form" onSubmit={submit}><label>Your name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Alex Morgan" autoComplete="name" required /></label><label>Email address<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="alex@example.com" autoComplete="email" required /></label><label className="register-phone">Phone number<input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" autoComplete="tel" pattern="[+0-9(). -]{7,30}" title="Enter a phone number with at least 7 digits." required /></label><button type="submit" disabled={busy || event.registeredCount >= event.capacity}>{busy ? 'Registering…' : event.registeredCount >= event.capacity ? 'Event is full' : 'Register for event'}<ArrowRight size={16} /></button></form>}</div></section></div>
 }
 
-function CreateDialog({ onClose, onCreate, onWarning }: { onClose: () => void; onCreate: (event: EventItem) => void; onWarning: (message: string) => void }) {
+function CreateDialog({ onClose, onCreate, onWarning }: { onClose: () => void; onCreate: (event: EventItem) => Promise<void>; onWarning: (message: string) => void }) {
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imageError, setImageError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [imagePreview, setImagePreview] = useState('')
+  useEffect(() => {
+    return () => { if (imagePreview) URL.revokeObjectURL(imagePreview) }
+  }, [imagePreview])
+
   const submit = async (form: FormEvent<HTMLFormElement>) => {
     form.preventDefault()
-    const data = new FormData(form.currentTarget)
-    const selectedCategory = String(data.get('category'))
-    const photoIndex = categories.indexOf(selectedCategory) % images.length
-    const location = String(data.get('location'))
-    const venue = String(data.get('venue'))
-    const coordinates = await geocodeVenue(`${venue}, ${location}`)
-    if (!coordinates) onWarning('We could not pinpoint that venue. The event will publish, but may not appear in Nearby. Add a street address or area for a more precise result.')
-    onCreate({ _id: '', title: String(data.get('title')), category: selectedCategory, date: String(data.get('date')), time: String(data.get('time')), location, venue, description: String(data.get('description')), image: images[photoIndex], price: Number(data.get('price')), capacity: Number(data.get('capacity')), registeredCount: 0, organizer: 'Guest organizer', format: String(data.get('format')) as EventItem['format'], coordinates })
+    setBusy(true)
+    setImageError('')
+    try {
+      const data = new FormData(form.currentTarget)
+      const selectedCategory = String(data.get('category'))
+      const photoIndex = categories.indexOf(selectedCategory) % images.length
+      const location = String(data.get('location'))
+      const venue = String(data.get('venue'))
+      let image = images[photoIndex]
+      if (imageFile) {
+        const upload = new FormData()
+        upload.append('image', imageFile)
+        const response = await axios.post<{ url: string }>('/api/events/image', upload)
+        image = response.data.url
+      }
+      const coordinates = await geocodeVenue(`${venue}, ${location}`)
+      if (!coordinates) onWarning('We could not pinpoint that venue. The event will publish, but may not appear in Nearby. Add a street address or area for a more precise result.')
+      await onCreate({ _id: '', title: String(data.get('title')), category: selectedCategory, date: String(data.get('date')), time: String(data.get('time')), location, venue, description: String(data.get('description')), image, price: Number(data.get('price')), capacity: Number(data.get('capacity')), registeredCount: 0, organizer: 'Guest organizer', format: String(data.get('format')) as EventItem['format'], coordinates })
+    } catch (error) {
+      const message = axios.isAxiosError(error) ? error.response?.data?.message : undefined
+      setImageError(message || 'Could not upload your image. Please try again.')
+    } finally { setBusy(false) }
   }
-  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section className="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><header className="create-header"><div><span className="eyebrow">MAKE SOMETHING HAPPEN</span><h2 id="create-title">Start with a good idea.</h2></div><button className="dialog-close" aria-label="Close" onClick={onClose}><X size={19} /></button></header><form className="create-form" onSubmit={submit}><label className="form-wide">Event name<input name="title" placeholder="Give your gathering a name" required /></label><label>Category<select name="category">{categories.slice(1).map((item) => <option key={item}>{item}</option>)}</select></label><label>Format<select name="format"><option>In person</option><option>Online</option></select></label><label>Date<input type="date" name="date" min={today} required /></label><label>Start time<input type="time" name="time" required /></label><label className="form-wide">Venue / building or street address<input name="venue" placeholder="Convention centre, Anna Salai" required /><small className="location-helper">Add the venue or street/area, then enter the city below.</small></label><label>City, State<input name="location" placeholder="Chennai, Tamil Nadu" required /></label><label>Ticket price ($)<input name="price" type="number" min="0" defaultValue="0" required /></label><label>Capacity<input name="capacity" type="number" min="1" defaultValue="100" required /></label><label className="form-wide">A little about it<textarea name="description" rows={3} placeholder="What makes this one worth showing up for?" required /></label><button type="submit" className="publish-button">Publish event <ArrowRight size={16} /></button></form></section></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}><section className="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><header className="create-header"><div><span className="eyebrow">MAKE SOMETHING HAPPEN</span><h2 id="create-title">Start with a good idea.</h2></div><button className="dialog-close" aria-label="Close" onClick={onClose} disabled={busy}><X size={19} /></button></header><form className="create-form" onSubmit={submit}><label className="form-wide">Event name<input name="title" placeholder="Give your gathering a name" required /></label><label>Category<select name="category">{categories.slice(1).map((item) => <option key={item}>{item}</option>)}</select></label><label>Format<select name="format"><option>In person</option><option>Online</option></select></label><label>Date<input type="date" name="date" min={today} required /></label><label>Start time<input type="time" name="time" required /></label><label className="form-wide">Venue / building or street address<input name="venue" placeholder="Convention centre, Anna Salai" required /><small className="location-helper">Add the venue or street/area, then enter the city below.</small></label><label>City, State<input name="location" placeholder="Chennai, Tamil Nadu" required /></label><label>Ticket price ($)<input name="price" type="number" min="0" defaultValue="0" required /></label><label>Capacity<input name="capacity" type="number" min="1" defaultValue="100" required /></label><label className="form-wide image-upload-field">Event cover image<span className="image-upload-control"><ImagePlus size={17} /><input type="file" accept="image/jpeg,image/png,image/webp" onClick={(event) => { event.currentTarget.value = '' }} onChange={(event) => { const file = event.currentTarget.files?.[0] || null; if (file && file.size > 5 * 1024 * 1024) { setImageFile(null); setImagePreview(''); setImageError('Choose an image smaller than 5 MB.'); return } setImageError(''); setImageFile(file); setImagePreview(file ? URL.createObjectURL(file) : '') }} /></span><small className="location-helper">JPG, PNG, or WebP up to 5 MB. Leave empty to use the category image.</small></label>{imagePreview && <div className="image-preview form-wide"><img src={imagePreview} alt="Selected event cover preview" /><button type="button" aria-label="Remove selected image" onClick={() => { setImageFile(null); setImagePreview('') }}><X size={16} /></button></div>}{imageError && <p className="upload-error form-wide" role="alert">{imageError}</p>}<label className="form-wide">A little about it<textarea name="description" rows={3} placeholder="What makes this one worth showing up for?" required /></label><button type="submit" className="publish-button" disabled={busy}>{busy ? 'Uploading and publishing…' : 'Publish event'} <ArrowRight size={16} /></button></form></section></div>
 }
 
 function AuthDialog({ mode, onModeChange, onClose, onSubmit }: { mode: AuthMode; onModeChange: (mode: AuthMode) => void; onClose: () => void; onSubmit: (mode: AuthMode, fields: { name?: string; email: string; password: string; role?: string }) => Promise<string | null> }) {

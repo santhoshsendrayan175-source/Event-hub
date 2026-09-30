@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import mongoose from 'mongoose'
+import path from 'node:path'
 import Event from './models/Event.js'
 import { seedEvents } from './seedEvents.js'
 import eventRoutes from './routes/events.js'
@@ -42,6 +43,7 @@ app.use('/api', (req, res, next) => {
 app.use('/api/events', eventRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
+app.use(express.static(path.resolve('dist')))
 app.use((error, _req, res, _next) => {
   console.error(error)
   res.status(error.status || 500).json({ message: error.message || 'Something went wrong.' })

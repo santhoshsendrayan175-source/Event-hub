@@ -5,13 +5,21 @@ EventHub is a MERN event discovery and management starter. The React dashboard i
 ## Run locally
 
 1. Install Node.js 20.19+ and MongoDB Community Server, or create a MongoDB Atlas cluster.
-2. Copy `.env.example` to `.env` and set `MONGODB_URI`. Change `JWT_SECRET` before deploying.
+2. Copy `.env.example` to `.env` and set `MONGODB_URI`, `JWT_SECRET`, and the Cloudinary credentials used for event image uploads.
 3. Run `npm install` and then `npm run dev`.
 4. Open `http://localhost:5173`. The API runs at `http://localhost:5000`.
 
 The dashboard ships with sample events so the interface can be explored before MongoDB is connected. When the API first connects to an empty MongoDB database, it inserts those six samples so registrations use real database event IDs. Creating events and registrations is persisted when MongoDB is connected; otherwise the UI keeps those changes in its current session.
 
 Use **Near me** and allow browser location access to search events within 10, 25, 50, or 100 km. Event venues are geocoded when published, and older records are backfilled on server startup. MongoDB stores event points as GeoJSON and searches them through a 2dsphere index. Geolocation requires localhost or HTTPS.
+
+## Deploy on Render
+
+This repository includes a Render Blueprint for a single web service that builds the React app and serves it from the Express API. Push the repository to GitHub, then create a Blueprint in Render and select this repository. Set `MONGODB_URI` in the Render service environment to a newly rotated MongoDB Atlas connection string; Render generates `JWT_SECRET` automatically. In Atlas, allow network access from the deployed service as required by your Atlas plan.
+
+Event cover uploads use Cloudinary. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` locally and in Render. The app accepts JPG, PNG, and WebP images up to 5 MB; images are stored in Cloudinary and their public URLs are saved with the event.
+
+The service builds with `npm ci && npm run build` and starts with `npm start`. Once deployed, open the Render service URL to view EventHub. The `/api/health` endpoint is used for health checks.
 
 ## API
 

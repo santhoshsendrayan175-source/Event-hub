@@ -1,8 +1,27 @@
 import { Router } from 'express'
+import multer from 'multer'
+import { v2 as cloudinary } from 'cloudinary'
 import Event from '../models/Event.js'
 import Registration from '../models/Registration.js'
 
 const router = Router()
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      return callback(new Error('Choose a JPG, PNG, or WebP image.'))
+    }
+    callback(null, true)
+  },
+})
+
+function parseImageUpload(req, res, next) {
+  imageUpload.single('image')(req, res, (error) => {
+    if (!error) return next()
+    res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ message: error.message })
+  })
+}
 
 router.get('/', async (req, res, next) => {
   try {
@@ -39,6 +58,31 @@ router.get('/nearby', async (req, res, next) => {
       { $sort: { distanceMeters: 1 } },
     ])
     res.json(events.map(({ distanceMeters, ...event }) => ({ ...event, distanceKm: Math.round(distanceMeters / 100) / 10 })))
+  } catch (error) { next(error) }
+})
+
+router.post('/image', parseImageUpload, async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Choose an image to upload.' })
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      return res.status(503).json({ message: 'Image uploads are not configured on this server.' })
+    }
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    })
+    const uploadedImage = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({
+        folder: 'eventhub/events',
+        resource_type: 'image',
+        transformation: [{ width: 1600, height: 1000, crop: 'limit' }, { quality: 'auto', fetch_format: 'auto' }],
+      }, (error, result) => error ? reject(error) : resolve(result))
+      stream.end(req.file.buffer)
+    })
+    if (!uploadedImage?.secure_url) return res.status(502).json({ message: 'The image could not be stored.' })
+    res.status(201).json({ url: uploadedImage.secure_url })
   } catch (error) { next(error) }
 })
 
